@@ -3,7 +3,7 @@
 # STEP 1: COMPLETE PREPROCESSING – NO LEAKAGE, NATURE MEDICINE READY
 # =============================================================================
 # - Per‑study stratified train/test split (metadata only)
-# - RNA‑seq: voom on training; test: log2(CPM+1e-6) + global quantile harmonisation
+# - RNA‑seq: DESeq2 on training; test: log2(CPM+1e-6) + global quantile harmonisation
 # - Microarray: quantile normalisation (training target applied to test)
 # - Global quantile harmonisation (target from training only) + optional ComBat+fsva
 # - Feature selection by median variance across studies
@@ -14,21 +14,21 @@
 # -----------------------------------------------------------------------------
 # 0. Configuration – EDIT THESE PATHS
 # -----------------------------------------------------------------------------
-BASE_DIR        <- "E:/GastricCancer-2026"
-GENE_SET_PATH   <- file.path(BASE_DIR, "Gene-Set", "Gene_Set.xlsx")
+BASE_DIR <- "E:/GastricCancer-2026"
+GENE_SET_PATH <- file.path(BASE_DIR, "Gene-Set", "Gene_Set.xlsx")
 STUDY_INFO_PATH <- file.path(BASE_DIR, "Gene-Set", "study.xlsx")
-CLINICAL_PATH   <- file.path(BASE_DIR, "Clinical_Data", "demo.xlsx")
-PROBE_MAP_PATH  <- file.path(BASE_DIR, "Annotation", "probe_to_gene.csv")   # optional
-OUTPUT_BASE     <- file.path(BASE_DIR, "Prepared_Data")
-QC_DIR          <- file.path(OUTPUT_BASE, "QC_plots")
-TEMP_DIR        <- file.path(OUTPUT_BASE, "temp")
+CLINICAL_PATH <- file.path(BASE_DIR, "Clinical_Data", "demo.xlsx")
+PROBE_MAP_PATH <- file.path(BASE_DIR, "Annotation", "probe_to_gene.csv") # optional
+OUTPUT_BASE <- file.path(BASE_DIR, "Prepared_Data")
+QC_DIR <- file.path(OUTPUT_BASE, "QC_plots")
+TEMP_DIR <- file.path(OUTPUT_BASE, "temp")
 
-RANDOM_SEED        <- 42
-TRAIN_FRACTION     <- 0.7
-MIN_COUNT_RNA      <- 10
-MIN_SAMP_FRAC_RNA  <- 0.1
+RANDOM_SEED <- 42
+TRAIN_FRACTION <- 0.7
+MIN_COUNT_RNA <- 10
+MIN_SAMP_FRAC_RNA <- 0.1
 TOP_VARIABLE_GENES <- 20000
-BATCH_CORRECT      <- TRUE   # set to FALSE if you rely only on quantile harmonisation
+BATCH_CORRECT <- TRUE # set to FALSE if you rely only on quantile harmonisation
 
 # -----------------------------------------------------------------------------
 # 1. Load libraries
@@ -99,17 +99,22 @@ qc_plots <- function(mat_list, title_prefix, output_dir) {
   study_labels <- rep(names(mat_list), times = sapply(mat_list, nrow))
   dens_data <- data.frame(value = as.vector(all_mat), study = study_labels)
   p_dens <- ggplot(dens_data, aes(x = value, colour = study)) +
-    geom_density() + theme_bw() + ggtitle(paste(title_prefix, "- Density"))
+    geom_density() +
+    theme_bw() +
+    ggtitle(paste(title_prefix, "- Density"))
   pca <- prcomp(all_mat, center = TRUE, scale. = FALSE)
-  pca_df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], study = study_labels)
+  pca_df <- data.frame(PC1 = pca$x[, 1], PC2 = pca$x[, 2], study = study_labels)
   var_exp <- round(100 * summary(pca)$importance[2, 1:2], 1)
   p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, colour = study)) +
-    geom_point(size = 2) + theme_bw() +
+    geom_point(size = 2) +
+    theme_bw() +
     labs(x = paste0("PC1 (", var_exp[1], "%)"), y = paste0("PC2 (", var_exp[2], "%)")) +
     ggtitle(paste(title_prefix, "- PCA"))
   pdf(file.path(output_dir, paste0(gsub(" ", "_", title_prefix), ".pdf")),
-      width = 12, height = 5)
-  print(p_dens); print(p_pca)
+    width = 12, height = 5
+  )
+  print(p_dens)
+  print(p_pca)
   dev.off()
 }
 
@@ -117,8 +122,10 @@ qc_plots <- function(mat_list, title_prefix, output_dir) {
 check_balance <- function(train_ids, test_ids, status_vec) {
   tr_rate <- mean(status_vec[train_ids] == 1, na.rm = TRUE)
   te_rate <- mean(status_vec[test_ids] == 1, na.rm = TRUE)
-  cat(sprintf("    Train event rate: %.3f, Test event rate: %.3f, Diff = %.3f\n",
-              tr_rate, te_rate, abs(tr_rate - te_rate)))
+  cat(sprintf(
+    "    Train event rate: %.3f, Test event rate: %.3f, Diff = %.3f\n",
+    tr_rate, te_rate, abs(tr_rate - te_rate)
+  ))
   if (abs(tr_rate - te_rate) > 0.1) warning("Large difference in event rates")
 }
 
@@ -135,7 +142,14 @@ run_platform <- function(platform_type) {
   sink_conn <- file(log_file, open = "wt")
   sink(sink_conn, type = "output", split = TRUE)
   sink(sink_conn, type = "message", append = TRUE)
-  on.exit({ sink(type = "output"); sink(type = "message"); close(sink_conn) }, add = TRUE)
+  on.exit(
+    {
+      sink(type = "output")
+      sink(type = "message")
+      close(sink_conn)
+    },
+    add = TRUE
+  )
 
   cat(rep("=", 80), "\n")
   cat("STEP 1.1 – PLATFORM:", toupper(platform_type), "\n")
@@ -186,17 +200,23 @@ run_platform <- function(platform_type) {
     samples <- samples[!is.na(samples) & samples != ""]
     for (s in samples) sample_study[[s]] <- study
   }
-  sample_df <- data.frame(sample_id = names(sample_study), study = unlist(sample_study),
-                          stringsAsFactors = FALSE)
+  sample_df <- data.frame(
+    sample_id = names(sample_study), study = unlist(sample_study),
+    stringsAsFactors = FALSE
+  )
   sample_df <- sample_df[sample_df$sample_id %in% colnames(expr_raw), ]
   expr_raw <- expr_raw[, sample_df$sample_id, drop = FALSE]
   cat("  Samples with data:", nrow(sample_df), "\n")
 
   # Filter by platform
   sample_df$platform <- ifelse(grepl("TCGA", sample_df$study, ignore.case = TRUE),
-                               "rnaseq", "microarray")
+    "rnaseq", "microarray"
+  )
   sample_df <- sample_df[sample_df$platform == platform_type, ]
-  if (nrow(sample_df) == 0) { cat("No", platform_type, "studies – skipping\n"); return(NULL) }
+  if (nrow(sample_df) == 0) {
+    cat("No", platform_type, "studies – skipping\n")
+    return(NULL)
+  }
   expr_raw <- expr_raw[, sample_df$sample_id, drop = FALSE]
   cat("  Kept", nrow(sample_df), "samples for", platform_type, "\n")
 
@@ -204,7 +224,8 @@ run_platform <- function(platform_type) {
   # 5. Clinical data for stratification
   # -------------------------------------------------------------------------
   cat("\n[3] Loading clinical data\n")
-  survival_status <- NULL; use_strat <- FALSE
+  survival_status <- NULL
+  use_strat <- FALSE
   if (file.exists(CLINICAL_PATH)) {
     demo_raw <- read_excel(CLINICAL_PATH, col_names = TRUE)
     demo_mat <- as.matrix(demo_raw[, -1])
@@ -215,12 +236,13 @@ run_platform <- function(platform_type) {
       raw_status <- demo_mat[status_row, ]
       survival_status <- setNames(
         ifelse(tolower(raw_status) %in% c("dead", "deceased"), 1,
-               ifelse(tolower(raw_status) %in% c("alive", "living"), 0, NA)),
+          ifelse(tolower(raw_status) %in% c("alive", "living"), 0, NA)
+        ),
         names(raw_status)
       )
       known_frac <- mean(!is.na(survival_status[sample_df$sample_id]))
       if (known_frac >= 0.7) use_strat <- TRUE
-      cat("  Survival known for", round(100*known_frac,1), "%\n")
+      cat("  Survival known for", round(100 * known_frac, 1), "%\n")
     }
   }
 
@@ -228,12 +250,16 @@ run_platform <- function(platform_type) {
   # 6. Train/test split (metadata only)
   # -------------------------------------------------------------------------
   cat("\n[4] Creating train/test split\n")
-  train_ids <- c(); test_ids <- c()
+  train_ids <- c()
+  test_ids <- c()
   studies <- unique(sample_df$study)
   for (study in studies) {
     study_samples <- sample_df$sample_id[sample_df$study == study]
     n_total <- length(study_samples)
-    if (n_total == 1) { train_ids <- c(train_ids, study_samples); next }
+    if (n_total == 1) {
+      train_ids <- c(train_ids, study_samples)
+      next
+    }
     n_train <- max(1, floor(TRAIN_FRACTION * n_total))
     if (n_train == n_total) n_train <- n_total - 1
     if (use_strat) {
@@ -277,31 +303,45 @@ run_platform <- function(platform_type) {
   for (study in studies) {
     study_train <- sample_df$sample_id[sample_df$study == study & sample_df$set == "train"]
     if (length(study_train) == 0) next
-    expr_train <- expr_raw[, study_train, drop = FALSE]  # genes x samples
+    expr_train <- expr_raw[, study_train, drop = FALSE] # genes x samples
     cat("  Study:", study, " n_train =", ncol(expr_train), "\n")
 
     if (platform_type == "rnaseq") {
-      # Remove genes with >50% NAs (voom cannot handle NAs)
+      # Remove genes with >50% NAs
       na_frac <- apply(expr_train, 1, function(x) mean(is.na(x)))
       expr_train <- expr_train[na_frac <= 0.5, , drop = FALSE]
-      # Convert to integer counts (round)
+      # Convert to integer counts (VST requires integers)
       expr_train <- round(expr_train)
       # Low‑count filter
       min_samp <- max(2, round(MIN_SAMP_FRAC_RNA * ncol(expr_train)))
       keep_genes <- rowSums(expr_train >= MIN_COUNT_RNA, na.rm = TRUE) >= min_samp
       expr_train <- expr_train[keep_genes, , drop = FALSE]
       cat("    Retained", sum(keep_genes), "genes after low‑count filter\n")
-      # voom normalisation
-      dge <- DGEList(counts = expr_train)
-      dge <- calcNormFactors(dge)
-      design <- matrix(1, nrow = ncol(expr_train), ncol = 1)  # intercept only
-      v <- voom(dge, design = design, plot = FALSE)
-      norm_mat <- t(v$E)   # samples x genes
+
+      # ----- DESeq2 VST normalisation (training only) -----
+      # Build DESeq2 object
+      dds <- DESeqDataSetFromMatrix(
+        countData = expr_train,
+        colData = data.frame(row.names = colnames(expr_train)),
+        design = ~1
+      )
+      # Estimate size factors (library size normalisation)
+      dds <- estimateSizeFactors(dds)
+      # Estimate dispersions (gene-wise variance)
+      dds <- estimateDispersions(dds)
+      # Apply Variance Stabilising Transformation
+      vst_mat <- assay(vst(dds, blind = FALSE))
+      norm_mat <- t(vst_mat) # samples x genes
+
       train_norm_list[[study]] <- norm_mat
+      # Save training parameters for later use on test data
       norm_params[[study]] <- list(
         platform = "rnaseq",
         genes_kept = rownames(expr_train),
-        voom_trend = v$voom.xy
+        # CRITICAL: lock the dispersion values. These will be applied to test data
+        # so that VST does NOT re‑estimate biological variance from test.
+        dispersions = mcols(dds)$dispersion,
+        size_factors = sizeFactors(dds) # for reference only
       )
     } else { # microarray
       # Remove genes with >50% NAs
@@ -344,12 +384,28 @@ run_platform <- function(platform_type) {
       # Subset to genes kept in training
       expr_test <- expr_test[rownames(expr_test) %in% params$genes_kept, , drop = FALSE]
       expr_test <- expr_test[params$genes_kept, , drop = FALSE]
-      # Compute log2(CPM + 1e-6) – safe, no -Inf, no leakage
-      lib_sizes <- colSums(expr_test, na.rm = TRUE)
-      cpm <- sweep(expr_test, 2, lib_sizes / 1e6, FUN = "/")
-      logcpm <- log2(cpm + 1e-6)   # 1e-6 avoids -Inf
-      # Transpose to samples x genes
-      test_norm_list[[study]] <- t(logcpm)
+      # Round to integer counts (VST requires integers)
+      expr_test <- round(expr_test)
+
+      # ----- Apply DESeq2 VST using training dispersions (NO LEAKAGE) -----
+      # Build a DESeq2 object for test data
+      dds_test <- DESeqDataSetFromMatrix(
+        countData = expr_test,
+        colData = data.frame(row.names = colnames(expr_test)),
+        design = ~1
+      )
+      # Estimate size factors from test samples (this is just library depth,
+      # it does NOT leak biological information, so it is safe).
+      dds_test <- estimateSizeFactors(dds_test)
+
+      # CRITICAL STEP: Overwrite the dispersions in the test object with
+      # the dispersions estimated from the TRAINING data.
+      # This prevents VST from re‑estimating variance using test samples.
+      mcols(dds_test)$dispersion <- params$dispersions
+
+      # Apply VST with the training‑locked dispersions
+      vst_test <- assay(vst(dds_test, blind = FALSE))
+      test_norm_list[[study]] <- t(vst_test) # samples x genes
     } else { # microarray
       if (!params$already_logged) {
         med_val <- median(expr_test, na.rm = TRUE)
@@ -385,7 +441,7 @@ run_platform <- function(platform_type) {
   start <- 1
   for (nm in names(train_norm_list)) {
     n <- nrow(train_norm_list[[nm]])
-    train_harm_list[[nm]] <- train_harm[start:(start+n-1), , drop = FALSE]
+    train_harm_list[[nm]] <- train_harm[start:(start + n - 1), , drop = FALSE]
     start <- start + n
   }
   # Apply to test
@@ -398,7 +454,7 @@ run_platform <- function(platform_type) {
     start <- 1
     for (nm in names(test_norm_list)) {
       n <- nrow(test_norm_list[[nm]])
-      test_harm_list[[nm]] <- test_harm[start:(start+n-1), , drop = FALSE]
+      test_harm_list[[nm]] <- test_harm[start:(start + n - 1), , drop = FALSE]
       start <- start + n
     }
   } else {
@@ -407,8 +463,9 @@ run_platform <- function(platform_type) {
 
   # QC before batch correction
   qc_plots(train_harm_list, paste0(platform_type, "_after_harmonisation"), qc_dir)
-  if (length(test_harm_list) > 0)
+  if (length(test_harm_list) > 0) {
     qc_plots(test_harm_list, paste0(platform_type, "_test_after_harmonisation"), qc_dir)
+  }
 
   # -------------------------------------------------------------------------
   # 10. Batch correction (ComBat on training, fsva to test)
@@ -436,8 +493,9 @@ run_platform <- function(platform_type) {
 
   # QC after batch correction
   qc_plots(list(train_corrected = train_corrected), paste0(platform_type, "_train_after_batch"), qc_dir)
-  if (nrow(test_corrected) > 0)
+  if (nrow(test_corrected) > 0) {
     qc_plots(list(test_corrected = test_corrected), paste0(platform_type, "_test_after_batch"), qc_dir)
+  }
 
   # -------------------------------------------------------------------------
   # 11. Feature selection: median variance across studies
@@ -495,7 +553,7 @@ run_platform <- function(platform_type) {
   # -------------------------------------------------------------------------
   cat("\n[11] Saving outputs\n")
   write.csv(as.data.frame(train_final), file.path(output_dir, "train_data.csv"), row.names = TRUE)
-  write.csv(as.data.frame(test_final),  file.path(output_dir, "test_data.csv"),  row.names = TRUE)
+  write.csv(as.data.frame(test_final), file.path(output_dir, "test_data.csv"), row.names = TRUE)
 
   sample_metadata <- sample_df[sample_df$sample_id %in% c(rownames(train_final), rownames(test_final)), ]
   write.csv(sample_metadata, file.path(output_dir, "sample_metadata.csv"), row.names = FALSE)
@@ -541,7 +599,8 @@ gene_data_tmp <- read_excel(GENE_SET_PATH, n_max = 1)
 samples_tmp <- colnames(gene_data_tmp)[-1]
 study_info_tmp <- read_excel(STUDY_INFO_PATH)
 study_info_tmp$study_name <- study_info_tmp$file_name %>%
-  str_replace("_series_matrix\\.xlsx$", "") %>% str_replace("\\.xlsx$", "")
+  str_replace("_series_matrix\\.xlsx$", "") %>%
+  str_replace("\\.xlsx$", "")
 sample_study_tmp <- unlist(lapply(seq_len(nrow(study_info_tmp)), function(i) {
   rep(study_info_tmp$study_name[i], sum(!is.na(study_info_tmp[i, -1]) & study_info_tmp[i, -1] != ""))
 }))
@@ -550,7 +609,8 @@ platforms_present <- unique(ifelse(grepl("TCGA", sample_study_tmp, ignore.case =
 for (p in platforms_present) {
   tryCatch(run_platform(p), error = function(e) {
     cat("ERROR in platform", p, ":", e$message, "\n")
-    sink(type = "output"); sink(type = "message")
+    sink(type = "output")
+    sink(type = "message")
   })
 }
 
