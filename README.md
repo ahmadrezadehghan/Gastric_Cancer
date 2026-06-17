@@ -42,7 +42,7 @@ The pipeline is designed to meet the standards of high‑impact journals (e.g., 
 ## ✨ Features
 
 - **No data leakage** – per‑study stratified split; normalisation parameters are locked from training and applied to test.
-- **Multi‑platform support** – handles RNA‑seq (voom) and microarray (quantile normalisation) in one workflow.
+- **Multi‑platform support** – handles RNA‑seq (DESeq2 VST) and microarray (quantile normalisation) in one workflow.
 - **Batch effect correction** – optional ComBat + fsva, with QC plots before/after.
 - **Survival modelling** – elastic‑net Cox regression with single or multiple imputation (MICE), time‑dependent AUC with 95% CIs, and DCA.
 - **Geographic & regional analysis** – world maps of sample distribution, country‑level hazard ratios, subregion KM curves, and region‑specific prognostic gene discovery.
@@ -59,8 +59,8 @@ All scripts are in R and should be executed in the order below.
 **Script:** `step1.1_preprocessing.R`  
 - Reads expression matrix, study mapping, and clinical data.  
 - Performs stratified train/test split per study (70%/30%).  
-- Normalises training data (voom for RNA‑seq, quantile for microarray), saves parameters.  
-- Applies same normalisation to test data using training parameters.  
+- Normalises training data using **DESeq2’s VST** for RNA‑seq (estimating size factors and dispersions on training data) and quantile normalisation for microarray.  
+- Applies the same transformation to test RNA‑seq data using the size factors and dispersion trend learned from training (ensuring zero leakage).  
 - Global quantile harmonisation (target from training).  
 - Optional batch correction (ComBat + fsva).  
 - Feature selection by median variance across studies.  
